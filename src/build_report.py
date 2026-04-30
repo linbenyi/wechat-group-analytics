@@ -269,26 +269,77 @@ def peak_moment(messages, peak_chart):
     return peak_time, peak_count, topic
 
 
+# ── Prose generators ─────────────────────────────────────────────────────────
+
+def _hi(w, top3_set):
+    """Wrap a word in highlight span if it's in top-3."""
+    if w in top3_set:
+        return f'<strong class="prose-hi">{w}</strong>'
+    return w
+
+
+def make_group_prose(words, group_name='这个群'):
+    """Weave top words into a ~500-char narrative prose; top-3 are highlighted."""
+    if not words:
+        return ''
+    top3 = {w for w, _ in words[:3]}
+    ww = [w for w, _ in words]
+    def g(i, fb='……'): return ww[i] if i < len(ww) else fb
+    def h(i, fb='……'): return _hi(g(i, fb), top3)
+
+    segs = [
+        f'在{group_name}的聊天记录里，{h(0)}与{h(1)}是当之无愧的高频词，',
+        f'几乎每隔几条消息就能见到它们的身影。',
+        f'紧随其后的{h(2)}，同样是群友们口口相传的热词。',
+        f'每当话题展开，{g(3)}和{g(4)}便频频登场；',
+        f'{g(5)}、{g(6)}也在各种讨论中留下了浓墨重彩的一笔。',
+        f'如果要用几个词来描绘这个群的气质，',
+        f'{h(0)}的热度、{g(7)}的温度，还有{g(8)}带来的节奏感，缺一不可。',
+        f'此外，{g(9)}、{g(10)}、{g(11)}构成了群聊的背景底色，',
+        f'让每一次闲聊都多了几分烟火气与真实感。',
+        f'群友们用{g(12)}和{g(13)}表达喜悦，',
+        f'用{g(14)}和{h(2)}传递共鸣——',
+        f'正是这些词语，拼接出了{group_name}独特的话语图谱。',
+    ]
+    return '<p class="word-prose">' + ''.join(segs) + '</p>'
+
+
+def make_person_prose(words):
+    """Generate ~100-char prose from a person's top words; top-3 highlighted."""
+    if not words:
+        return ''
+    top3 = {w for w, _ in words[:3]}
+    ww = [w for w, _ in words]
+    def g(i, fb=''): return ww[i] if i < len(ww) else fb
+    def h(i, fb=''): return _hi(g(i, fb), top3)
+
+    segs = [
+        f'最爱说{h(0)}，{h(1)}也常挂在嘴边。',
+        f'聊到{h(2)}时总有话讲，',
+        f'{g(3)}和{g(4)}同样是高频词。',
+        f'偶尔冒出{g(5)}、{g(6)}，风格鲜明。',
+    ]
+    return ''.join(s for s in segs if s.strip('，。'))
+
+
 # ── HTML fragment builders ────────────────────────────────────────────────────
 
-def word_html(messages):
+def word_html(messages, group_name='这个群'):
     texts = [m['content'] for m in messages if m['msg_type'] == 'text']
     words = top_words(texts, 40)
     if not words:
         return ''
     mc = words[0][1]
-    C_accent = 'var(--accent)'
-    C_accent2 = 'var(--accent2)'
-    C_muted = 'var(--muted)'
     badges = ''
     for w, c in words:
         p = c / mc
         size = 0.76 + p * 0.92
         op   = 0.40 + p * 0.60
-        col  = C_accent if p > 0.6 else (C_accent2 if p > 0.3 else C_muted)
+        col  = 'var(--accent)' if p > 0.6 else ('var(--accent2)' if p > 0.3 else 'var(--muted)')
         badges += (f'<span class="wbadge" style="font-size:{size:.2f}rem;color:{col};opacity:{op:.2f}"'
                    f' title="{c} 次">{w}</span>')
-    return f'<div class="word-cloud">{badges}</div>'
+    prose = make_group_prose(words, group_name)
+    return f'<div class="word-cloud">{badges}</div>{prose}'
 
 
 def person_words_html(messages, portrait_rows):
@@ -310,9 +361,17 @@ def person_words_html(messages, portrait_rows):
             op   = 0.55 + p * 0.45
             badges += (f'<span class="wbadge" style="font-size:{size:.2f}rem;'
                        f'color:var(--accent);opacity:{op:.2f}" title="{c} 次">{w}</span> ')
+        prose = make_person_prose(words)
         short = name[:10] + ('…' if len(name) > 10 else '')
-        items.append(f'<div class="pw-row"><span class="pw-name" title="{name}">{short}</span>'
-                     f'<span class="pw-words">{badges}</span></div>')
+        items.append(
+            f'<div class="pw-row">'
+            f'<span class="pw-name-wrap">'
+            f'<span class="pw-name">{short}</span>'
+            f'<div class="pw-prose-pop">{prose}</div>'
+            f'</span>'
+            f'<span class="pw-words">{badges}</span>'
+            f'</div>'
+        )
     return '<div class="pw-list">' + ''.join(items) + '</div>'
 
 
@@ -379,62 +438,62 @@ def table_html(portrait_rows, total_msg=1):
             f'</tr></thead><tbody>{tbody}</tbody></table></div>')
 
 
-def portrait_tabs_html(portrait_rows, messages, C):
-    lurkers, vanished, stars = make_portraits(portrait_rows)
+def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
+    lurkers, _vanished, stars = make_portraits(portrait_rows)
 
-    svg1 = svg_bar_h([(r['name'], r['silent']) for r in vanished], C, color_key='muted', unit='d')
     mt = max((r['total'] for r in lurkers), default=1)
-    svg2 = svg_scatter([(r['name'], r['span'], r['total'], r['total']/mt) for r in lurkers],
-                       C, color_key='purple', xlabel='Active span (days)', ylabel='Messages')
+    svg_lurk = svg_scatter([(r['name'], r['span'], r['total'], r['total']/mt) for r in lurkers],
+                           C, color_key='purple', xlabel='活跃跨度(天)', ylabel='消息数')
     ms = max((r['total'] / max(r['span'], 1) for r in stars), default=1)
-    svg3 = svg_scatter_stars(
+    svg_star = svg_scatter_stars(
         [(r['name'], r['late'], r['total']/max(r['span'],1), (r['total']/max(r['span'],1))/ms)
          for r in stars], C, color_key='green')
-    tl = [(r['name'], f"Last seen {r['last']} · silent {r['silent']}d") for r in vanished[:8]]
-    svg_tl = svg_timeline(tl, C)
-    wh = word_html(messages)
+
+    # 时间线：按首次发言时间排序，显示发言总数
+    tl_rows = sorted(portrait_rows, key=lambda r: r['first'])[:30]
+    tl_events = [
+        (r['name'], f"共 {r['total']:,} 条 · {r['first']} ~ {r['last']}")
+        for r in tl_rows
+    ]
+    svg_tl = svg_timeline(tl_events, C)
+
+    wh = word_html(messages, group_name)
     pw = person_words_html(messages, portrait_rows)
 
-    nv, nl, ns = len(vanished), len(lurkers), len(stars)
+    nl, ns = len(lurkers), len(stars)
     def tc(n): return f'<span class="tab-count">{n}</span>' if n else ''
 
     return f"""<div class="portrait-tabs">
   <div class="tab-bar">
-    <button class="tab-btn active" onclick="showTab(this,'tp-van')">消失的人{tc(nv)}</button>
-    <button class="tab-btn" onclick="showTab(this,'tp-lurk')">少言寡语{tc(nl)}</button>
+    <button class="tab-btn active" onclick="showTab(this,'tp-lurk')">少言寡语{tc(nl)}</button>
     <button class="tab-btn" onclick="showTab(this,'tp-star')">后起之秀{tc(ns)}</button>
     <button class="tab-btn" onclick="showTab(this,'tp-tl')">时间线</button>
-    <button class="tab-btn" onclick="showTab(this,'tp-word')">词频</button>
+    <button class="tab-btn" onclick="showTab(this,'tp-word')">群组词频</button>
     <button class="tab-btn" onclick="showTab(this,'tp-pw')">个人词频</button>
   </div>
-  <div id="tp-van" class="tab-panel active">
-    <div class="p-card"><h3>消失的人</h3>
-      <span class="p-count">{nv} members · ≥10 msgs, silent ≥180d</span>
-      <div class="svg-container">{svg1}</div></div>
-  </div>
-  <div id="tp-lurk" class="tab-panel">
+  <div id="tp-lurk" class="tab-panel active">
     <div class="p-card"><h3>少言寡语者</h3>
-      <span class="p-count">{nl} members · ≤50 msgs, span ≥180d</span>
-      <div class="svg-container">{svg2}</div></div>
+      <span class="p-count">{nl} 位 · 发言 ≤50 条，活跃跨度 ≥180 天</span>
+      <div class="svg-container">{svg_lurk}</div></div>
   </div>
   <div id="tp-star" class="tab-panel">
     <div class="p-card"><h3>后起之秀</h3>
-      <span class="p-count">{ns} members · joined ≥30d late, ≥20 msgs · dashed = 100d ref</span>
-      <div class="svg-container">{svg3}</div></div>
+      <span class="p-count">{ns} 位 · 晚入群 ≥30 天，仍积极发言 · 虚线 = 100 天参考线</span>
+      <div class="svg-container">{svg_star}</div></div>
   </div>
   <div id="tp-tl" class="tab-panel">
-    <div class="p-card"><h3>最后现身时间线</h3>
-      <span class="p-count">Last appearance of vanished members</span>
+    <div class="p-card"><h3>成员时间线</h3>
+      <span class="p-count">按首次发言时间排序 · 共 {len(tl_rows)} 位成员</span>
       <div class="svg-container">{svg_tl}</div></div>
   </div>
   <div id="tp-word" class="tab-panel">
-    <div class="p-card"><h3>词频</h3>
-      <span class="p-count">Hover a word to see its count</span>
+    <div class="p-card"><h3>群组词频</h3>
+      <span class="p-count">鼠标悬停词语查看出现次数</span>
       {wh}</div>
   </div>
   <div id="tp-pw" class="tab-panel">
     <div class="p-card"><h3>个人词频</h3>
-      <span class="p-count">Top-20 speakers · top-8 personal words · hover for count</span>
+      <span class="p-count">Top-20 活跃成员 · 悬停姓名查看词句</span>
       <div class="svg-container" style="display:block">{pw}</div></div>
   </div>
 </div>"""
@@ -549,8 +608,19 @@ table.dtbl td:not(:first-child):not(:nth-child(2)){{color:var(--accent);font-var
 .pw-list{{width:100%}}
 .pw-row{{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px solid rgba(0,0,0,.06)}}
 .pw-row:last-child{{border-bottom:none}}
-.pw-name{{font-size:.74rem;color:var(--muted);min-width:84px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.pw-name-wrap{{position:relative;min-width:84px;flex-shrink:0}}
+.pw-name{{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;cursor:default;border-bottom:1px dashed transparent;transition:border-color .12s}}
+.pw-name-wrap:hover .pw-name{{color:var(--accent);border-bottom-color:var(--accent)}}
+.pw-prose-pop{{display:none;position:absolute;left:0;top:100%;background:var(--card);
+  border:1px solid var(--border);border-radius:8px;padding:9px 13px;width:230px;
+  font-size:.74rem;line-height:1.65;z-index:200;box-shadow:0 6px 20px rgba(0,0,0,.13);
+  white-space:normal;color:var(--text)}}
+.pw-name-wrap:hover .pw-prose-pop{{display:block}}
 .pw-words{{flex:1;line-height:1.9}}
+.word-prose{{font-size:.78rem;line-height:1.8;color:var(--text);opacity:.82;
+  margin-top:10px;padding:10px 14px;background:var(--warm);border-radius:6px;
+  border-left:3px solid var(--accent)}}
+.prose-hi{{color:var(--accent);font-weight:700;font-style:normal}}
 
 footer{{margin-top:64px;padding:24px 56px;border-top:1px solid var(--border);
   display:flex;justify-content:center;font-size:.68rem;color:var(--muted);opacity:.7;font-style:italic}}
@@ -750,7 +820,7 @@ def main():
     </div>
     <div>
       <p class="col-label">人物画像</p>
-      {portrait_tabs_html(portrait_rows, messages, C)}
+      {portrait_tabs_html(portrait_rows, messages, C, group)}
     </div>
   </div>
 </div>
