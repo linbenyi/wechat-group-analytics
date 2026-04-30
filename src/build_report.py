@@ -168,20 +168,26 @@ def svg_scatter_lurkers(rows, C, width=500, height=340):
 
     xs = [r['span']  for r in rows]
     ys = [r['total'] for r in rows]
-    max_x, max_y = max(xs) or 1, max(ys) or 1
+
+    # X axis: derived from data but minimum span starts at 150
+    x_min = max(0, min(xs) - 10)    # a little padding left of smallest
+    x_max = max(xs) * 1.05 or 1
+    y_max = max(ys) * 1.1  or 1
+
     max_silent = max(r['silent'] for r in rows) or 1
     max_daily  = max(r['total'] / max(r['span'], 1) for r in rows) or 1
 
-    sx = lambda v: pl + v / max_x * (width  - pl - pr)
-    sy = lambda v: height - pb - v / max_y * (height - pb - pt)
+    x_range = x_max - x_min or 1
+    sx = lambda v: pl + (v - x_min) / x_range * (width  - pl - pr)
+    sy = lambda v: height - pb - v / y_max * (height - pb - pt)
 
     # colour stops: accent → very light warm
-    c_full  = C['accent']   # most recent
-    c_pale  = '#F2EBE4'     # longest silent (near bg)
+    c_full  = C['accent']
+    c_pale  = '#F2EBE4'
 
-    # axis ticks
-    x_ticks = _nice_ticks(max_x, 5)
-    y_ticks = _nice_ticks(max_y, 5)
+    # axis ticks derived from actual data range
+    x_ticks = [t for t in _nice_ticks(x_max, 5) if t >= x_min]
+    y_ticks = _nice_ticks(y_max, 5)
 
     grid = ''
     for xv in x_ticks:
@@ -288,15 +294,17 @@ def svg_scatter_stars(points, C, width=460, height=270, color_key='green',
 
 
 def svg_timeline(events, C, width=460):
+    """events: list of (label, sub, silent_days)"""
     if not events:
         return '<p style="color:var(--muted);font-size:.82rem">No data</p>'
     h = len(events) * 44 + 14
     items = ''
-    for i, (label, sub) in enumerate(events):
+    for i, (label, sub, silent) in enumerate(events):
         y = i * 44 + 24
         conn = (f'<line x1="14" y1="{y+5}" x2="14" y2="{y+38}" stroke="{C["border"]}" stroke-width="1.5"/>'
                 if i < len(events) - 1 else '')
-        items += (f'<circle cx="14" cy="{y}" r="4" fill="{C["accent"]}" opacity=".85"/>{conn}'
+        dot_color = C['red'] if silent > 100 else C['accent']
+        items += (f'<circle cx="14" cy="{y}" r="4" fill="{dot_color}" opacity=".85"/>{conn}'
                   f'<text x="30" y="{y+4}" font-size="12" font-weight="600" fill="{C["text"]}">{label}</text>'
                   f'<text x="30" y="{y+18}" font-size="10" fill="{C["muted"]}">{sub}</text>')
     return f'<svg viewBox="0 0 {width} {h}" width="100%" xmlns="http://www.w3.org/2000/svg">{items}</svg>'
@@ -348,7 +356,7 @@ def compute_portraits(messages):
 
 
 def make_portraits(rows, vanish_min=10, vanish_days=180,
-                   lurk_max=50, lurk_span=180,
+                   lurk_max=50, lurk_span=150,
                    star_late=30, star_total=20,
                    lurk_limit=50, star_limit=20):
     lurkers  = sorted([r for r in rows if r['total'] <= lurk_max and r['span'] >= lurk_span],
@@ -362,7 +370,7 @@ def make_portraits(rows, vanish_min=10, vanish_days=180,
 
 def peak_moment(messages, peak_chart):
     if not peak_chart:
-        return '', 0, ''
+        return '', 0, '', ''
     peak_time  = peak_chart[0]['name']
     peak_count = peak_chart[0].get('value', 0)
     hour_prefix = peak_time[:13]
@@ -383,7 +391,23 @@ def peak_moment(messages, peak_chart):
         if any(k in all_w or any(k in w for w in all_w) for k in kws):
             topic = label
             break
-    return peak_time, peak_count, topic
+
+    # Build a short prose sentence for the peak hour tooltip
+    peak_prose = ''
+    if words:
+        top3p = {w for w, _ in words[:3]}
+        def hp(w): return f'<strong style="color:var(--accent)">{w}</strong>' if w in top3p else w
+        ww = [w for w, _ in words]
+        def gp(i): return ww[i] if i < len(ww) else ''
+        parts = [f'那一小时，大家聊到了{hp(gp(0))}']
+        if gp(1): parts.append(f'、{hp(gp(1))}')
+        if gp(2): parts.append(f'、{hp(gp(2))}')
+        if gp(3): parts.append(f'，还有{gp(3)}')
+        if gp(4): parts.append(f'和{gp(4)}')
+        parts.append(f'——群里格外热闹。')
+        peak_prose = ''.join(parts)
+
+    return peak_time, peak_count, topic, peak_prose
 
 
 # ── Prose generators ─────────────────────────────────────────────────────────
@@ -573,25 +597,35 @@ def table_html(portrait_rows, total_msg=1):
             f'</tr></thead><tbody>{tbody}</tbody></table></div>')
 
 
+def timeline_html(portrait_rows, C):
+    """Standalone timeline card for left column. Top-30 by total messages.
+    Last-seen >100 days ago: end date shown bold + red dot."""
+    tl_rows = sorted(portrait_rows, key=lambda r: r['total'], reverse=True)[:30]
+    events = []
+    for r in tl_rows:
+        last_str = r['last']
+        if r['silent'] > 100:
+            last_str = f'<tspan font-weight="700" fill="{{}}">{last_str}</tspan>'
+        events.append((r['name'],
+                       f"共 {r['total']:,} 条 · {r['first']} ~ {r['last']}",
+                       r['silent']))
+    svg = svg_timeline(events, C)
+    return (f'<div class="p-card" style="height:450px;overflow:hidden;display:flex;flex-direction:column">'
+            f'<h3>成员时间线</h3>'
+            f'<span class="p-count">Top-30 发言成员 · 末次发言超100天的圆点标红</span>'
+            f'<div class="svg-container">{svg}</div>'
+            f'</div>')
+
+
 def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
     lurkers, _vanished, stars = make_portraits(portrait_rows)
 
-    # 少言寡语：新气泡图（颜色渐变 + 刻度 + 气泡大小=日均）
     svg_lurk = svg_scatter_lurkers(lurkers, C)
 
-    # 后起之秀：accent 主题色（warm=珊瑚）
     ms = max((r['total'] / max(r['span'], 1) for r in stars), default=1)
     svg_star = svg_scatter_stars(
         [(r['name'], r['late'], r['total']/max(r['span'],1), (r['total']/max(r['span'],1))/ms)
          for r in stars], C, color_key='accent')
-
-    # 时间线：发言最多的 30 人，按发言数降序
-    tl_rows = sorted(portrait_rows, key=lambda r: r['total'], reverse=True)[:30]
-    tl_events = [
-        (r['name'], f"共 {r['total']:,} 条 · {r['first']} ~ {r['last']}")
-        for r in tl_rows
-    ]
-    svg_tl = svg_timeline(tl_events, C)
 
     wh = word_html(messages, group_name)
     pw = person_words_html(messages, portrait_rows)
@@ -603,7 +637,6 @@ def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
   <div class="tab-bar">
     <button class="tab-btn active" onclick="showTab(this,'tp-lurk')">少言寡语{tc(nl)}</button>
     <button class="tab-btn" onclick="showTab(this,'tp-star')">后起之秀{tc(ns)}</button>
-    <button class="tab-btn" onclick="showTab(this,'tp-tl')">时间线</button>
     <button class="tab-btn" onclick="showTab(this,'tp-word')">群组词频</button>
     <button class="tab-btn" onclick="showTab(this,'tp-pw')">个人词频</button>
   </div>
@@ -616,11 +649,6 @@ def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
     <div class="p-card"><h3>后起之秀</h3>
       <span class="p-count">{ns} 位 · 晚入群 ≥30 天，仍积极发言 · 虚线 = 100 天参考线</span>
       <div class="svg-container">{svg_star}</div></div>
-  </div>
-  <div id="tp-tl" class="tab-panel">
-    <div class="p-card"><h3>成员时间线</h3>
-      <span class="p-count">按首次发言时间排序 · 共 {len(tl_rows)} 位成员</span>
-      <div class="svg-container">{svg_tl}</div></div>
   </div>
   <div id="tp-word" class="tab-panel">
     <div class="p-card"><h3>群组词频</h3>
@@ -666,17 +694,29 @@ header h1 em{{font-style:italic;color:var(--accent)}}
 .h-rule{{width:36px;height:1.5px;background:var(--accent);margin:22px 0}}
 .h-meta{{display:flex;gap:28px;flex-wrap:wrap;font-size:.78rem;color:rgba(0,0,0,.44)}}
 .h-meta strong{{color:rgba(0,0,0,.78);font-weight:400}}
-.h-peak{{position:absolute;bottom:24px;right:56px;text-align:right;opacity:.22;pointer-events:none}}
+.h-peak{{position:absolute;bottom:24px;right:56px;text-align:right;opacity:.22;cursor:default;
+  transition:opacity .25s}}
+.h-peak:hover{{opacity:1}}
 .h-peak-label{{font-size:.58rem;letter-spacing:.15em;text-transform:uppercase;display:block;margin-bottom:2px}}
-.h-peak-num{{font-family:'EB Garamond',serif;font-size:3.2rem;font-weight:400;line-height:1;color:var(--accent);display:block}}
+.h-peak-num{{font-family:'EB Garamond',serif;font-size:3.2rem;font-weight:400;line-height:1;color:var(--accent);display:block;font-variant-numeric:tabular-nums}}
 .h-peak-rest{{font-size:.68rem;display:block;margin-top:4px}}
+.h-peak-tip{{max-height:0;overflow:hidden;opacity:0;font-size:.74rem;line-height:1.65;
+  color:var(--ink);margin-top:6px;text-align:right;
+  transition:max-height .35s ease,opacity .3s ease}}
+.h-peak:hover .h-peak-tip{{max-height:120px;opacity:1}}
 
 .stats-bar{{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border);background:var(--card)}}
-.stat-cell{{padding:26px 22px 22px;border-right:1px solid var(--border);transition:background .15s;cursor:default}}
+.stat-cell{{padding:26px 22px 22px;border-right:1px solid var(--border);transition:background .15s;
+  cursor:default;position:relative;overflow:visible}}
 .stat-cell:last-child{{border-right:none}}
 .stat-cell:hover{{background:var(--warm)}}
 .stat-n{{font-family:'EB Garamond',serif;font-size:2.5rem;font-weight:400;color:var(--accent);line-height:1;margin-bottom:5px;font-variant-numeric:tabular-nums}}
 .stat-l{{font-size:.64rem;color:var(--muted);text-transform:uppercase;letter-spacing:.13em}}
+.stat-tip{{display:none;position:absolute;left:0;top:100%;background:var(--card);
+  border:1px solid var(--border);border-radius:0 0 8px 8px;
+  padding:9px 16px;font-size:.72rem;color:var(--muted);white-space:nowrap;
+  box-shadow:0 6px 16px rgba(0,0,0,.10);z-index:50;line-height:1.8;min-width:100%}}
+.stat-cell:hover .stat-tip{{display:block}}
 
 .section{{padding:44px 56px 0}}
 .section-head{{display:flex;align-items:baseline;gap:13px;padding-bottom:11px;border-bottom:1px solid var(--border);margin-bottom:9px}}
@@ -862,7 +902,7 @@ function sortTbl(id, col, type) {
   var io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible');}),{threshold:.1});
   document.querySelectorAll('.reveal,.scale-reveal').forEach(el=>io.observe(el));
   var co=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){var v=parseInt(e.target.dataset.val);if(!isNaN(v))countUp(e.target,v,1200);co.unobserve(e.target);}}),{threshold:.4});
-  document.querySelectorAll('.stat-n[data-val]').forEach(el=>co.observe(el));
+  document.querySelectorAll('.stat-n[data-val],.h-peak-num[data-val]').forEach(el=>co.observe(el));
 })();
 """
 
@@ -920,17 +960,32 @@ def main():
         total_span_days = (d1 - d0).days + 1
         coverage_pct = round(n_active / total_span_days * 100) if total_span_days else 100
     else:
+        total_span_days = n_active
         coverage_pct = 100
+
+    # Stats hover details
+    n_image   = sum(1 for m in messages if m.get('msg_type') == 'image')
+    n_link    = sum(1 for m in messages if m.get('msg_type') == 'link')
+    n_sticker = sum(1 for m in messages if m.get('msg_type') == 'sticker')
+    active_pct = round(n_active_members / n_members_all * 100) if n_members_all else 0
+    daily_avg_active = round(total_msg / n_active) if n_active else 0   # msgs on days that have msgs
+    daily_img    = round(n_image   / n_active, 1) if n_active else 0
+    daily_stick  = round(n_sticker / n_active, 1) if n_active else 0
 
     def get_chart(kw):
         return next((c.get('topn', c.get('top5', c.get('top3', [])))
                      for c in charts if kw in c['chart']), [])
 
-    peak_time, peak_count, topic = peak_moment(messages, get_chart('最激烈'))
+    peak_time, peak_count, topic, peak_prose = peak_moment(messages, get_chart('最激烈'))
     pc_fmt = f'{peak_count:,}' if peak_count else '—'
-    h_peak = (f'<div class="h-peak"><span class="h-peak-label">历史峰值</span>'
-              f'<span class="h-peak-num">{pc_fmt}</span>'
-              f'<span class="h-peak-rest">条/小时·{topic}·{peak_time}</span></div>') if peak_count else ''
+    h_peak = (
+        f'<div class="h-peak">'
+        f'<span class="h-peak-label">历史峰值</span>'
+        f'<span class="h-peak-num" data-val="{peak_count}">{pc_fmt}</span>'
+        f'<span class="h-peak-rest">条/小时 · {topic} · {peak_time}</span>'
+        f'<div class="h-peak-tip">{peak_prose}</div>'
+        f'</div>'
+    ) if peak_count else ''
 
     portrait_rows = compute_portraits(messages)
 
@@ -949,18 +1004,34 @@ def main():
   <div class="h-rule"></div>
   <div class="h-meta">
     <span><strong>{date_start}</strong> — <strong>{date_end}</strong></span>
-    <span><strong>{total_msg:,}</strong> 条消息</span>
-    <span><strong>{n_members_all:,}</strong> 位成员</span>
-    <span><strong>{n_active:,}</strong> 个活跃天</span>
+    <span>{chat_mb_str} 数据</span>
+    <span>已选出前 <strong>{n_active_members}</strong> 位活跃成员</span>
+    <span>消息已脱敏</span>
   </div>
   {h_peak}
 </header>
 
 <div class="stats-bar reveal delay-1">
-  <div class="stat-cell"><div class="stat-n">{chat_mb_str}</div><div class="stat-l">合计数据量</div></div>
-  <div class="stat-cell"><div class="stat-n" data-val="{n_active_members}">{n_active_members:,}</div><div class="stat-l">活跃成员（日均≥1条）</div></div>
-  <div class="stat-cell"><div class="stat-n" data-val="{coverage_pct}">{coverage_pct}%</div><div class="stat-l">天数有消息更新</div></div>
-  <div class="stat-cell"><div class="stat-n" data-val="{daily_avg}">{daily_avg:,}</div><div class="stat-l">日均发言次数</div></div>
+  <div class="stat-cell">
+    <div class="stat-n" data-val="{total_msg}">{total_msg:,}</div>
+    <div class="stat-l">总消息数</div>
+    <div class="stat-tip">📷 图片 {n_image:,} 条&emsp;🔗 链接 {n_link:,} 条&emsp;😄 表情 {n_sticker:,} 条</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-n" data-val="{n_active_members}">{n_active_members:,}</div>
+    <div class="stat-l">活跃成员</div>
+    <div class="stat-tip">总成员 {n_members_all} 人&emsp;活跃占比 {active_pct}%</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-n" data-val="{coverage_pct}">{coverage_pct}%</div>
+    <div class="stat-l">天数有消息</div>
+    <div class="stat-tip">有消息天数 {n_active} 天&emsp;总跨度 {total_span_days} 天</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-n" data-val="{daily_avg_active}">{daily_avg_active:,}</div>
+    <div class="stat-l">日均发言</div>
+    <div class="stat-tip">有消息日日均 {daily_avg_active} 条&emsp;日均图片 {daily_img}&emsp;日均表情 {daily_stick}</div>
+  </div>
 </div>
 
 <div class="section reveal delay-2">
@@ -970,16 +1041,20 @@ def main():
 </div>
 
 <div class="section reveal delay-3" style="padding-bottom:48px">
-  <div class="section-head"><span class="section-num">02</span><h2>综合榜 · 人物画像</h2></div>
+  <div class="section-head"><span class="section-num">02</span><h2>时间线 · 人物画像</h2></div>
   <div class="two-col scale-reveal delay-4">
     <div>
-      <p class="col-label">综合榜单</p>
-      {table_html(portrait_rows, total_msg)}
+      <p class="col-label">成员时间线</p>
+      {timeline_html(portrait_rows, C)}
     </div>
     <div>
       <p class="col-label">人物画像</p>
       {portrait_tabs_html(portrait_rows, messages, C, group)}
     </div>
+  </div>
+  <div class="section-head" style="margin-top:32px"><span class="section-num">03</span><h2>综合榜单</h2></div>
+  <div class="scale-reveal">
+    {table_html(portrait_rows, total_msg)}
   </div>
 </div>
 
