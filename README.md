@@ -18,31 +18,71 @@
 
 ---
 
+## 完整流程
+
+数据来源是微信本地数据库，通过 [wechat-cli](https://github.com/freestylefly/wechat-cli) 导出，再经过本工具链处理成 HTML 报告。
+
+```
+wechat-cli export  →  聊天记录.md
+        │
+        ├── analyze_chat.py  →  Plotly report.html
+        │                              │
+        │                    extract_topn.py  →  top5.json ──┐
+        │                                                     │
+        └── md_to_json.py  →  chat.json ──────────────────────┤
+                                                              │
+                                                    build_report.py
+                                                              │
+                                                      最终 report.html
+```
+
+**📖 详细步骤请看 → [docs/wechat-cli-guide.md](docs/wechat-cli-guide.md)**（含超过 10 万条消息的大群处理方案）
+
+---
+
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
+# wechat-cli（需要 Node.js）
+npm install -g @canghe_ai/wechat-cli
+
+# Python 依赖
 pip install -r requirements.txt
+pip install pandas plotly emoji   # analyze_chat.py 额外需要
 ```
 
-### 2. 准备数据
+### 2. 导出聊天记录
 
-需要两个 JSON 文件：
+```bash
+# 首次初始化（微信需保持运行）
+wechat-cli init         # macOS/Linux 加 sudo
 
-- **`chat.json`** — 原始聊天记录（消息数组）
-- **`top5.json`** — 图表 Top-N 数据（由 `extract_topn.py` 从 Plotly HTML 报告提取）
+# 导出为 Markdown
+wechat-cli export "群聊名称" --format markdown --limit 9999999 --output 群聊名称聊天记录.md
+
+# 超过 10 万条？用 --offset 分批追加到同一文件，无需合并：
+wechat-cli export "大群" --format markdown --limit 99999 --offset 0   --output 大群.md
+wechat-cli export "大群" --format markdown --limit 99999 --offset 99999 >> 大群.md
+# 详见 docs/wechat-cli-guide.md
+```
+
+### 3. 转为 JSON
+
+```bash
+python md_to_json.py 群聊名称聊天记录.md   # → 群聊名称聊天记录.json
+```
+
+### 4. 提取图表 Top-N 数据
+
+```bash
+python src/extract_topn.py path/to/report.html   # → top5.json
+```
 
 详见 [`examples/data_format.md`](examples/data_format.md)。
 
-### 3. 提取图表数据（如有 Plotly HTML 报告）
-
-```bash
-python src/extract_topn.py path/to/report.html
-# 输出: path/to/top5.json
-```
-
-### 4. 生成 HTML 报告
+### 5. 生成 HTML 报告
 
 ```bash
 # Apple 主题（默认）
