@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.token
+*.html
+*.json
+!examples/data_format.md
+.DS_Store
+Thumbs.db
