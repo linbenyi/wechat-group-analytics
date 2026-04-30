@@ -758,11 +758,33 @@ def main():
     bg = MAGNET_BG[args.theme]
 
     senders = {m['sender'] for m in messages if m['sender'] != 'system'}
-    n_members = len(senders)
+    n_members_all = len(senders)
     dates = sorted({m['date'] for m in messages if 'date' in m and m['sender'] != 'system'})
     n_active  = len(dates)
     date_start, date_end = (dates[0], dates[-1]) if dates else ('', '')
     daily_avg = round(total_msg / n_active) if n_active else 0
+
+    # Stats bar values
+    # 1. JSON file size in MB
+    chat_mb = round(chat_path.stat().st_size / 1024 / 1024, 1)
+    chat_mb_str = f'{chat_mb} MB'
+
+    # 2. Active members: those whose avg daily messages >= 1
+    #    = total messages / span days >= 1  → total >= span
+    from collections import Counter
+    msgs_per_sender = Counter(m['sender'] for m in messages if m['sender'] != 'system')
+    span_days = max((n_active - 1), 1)
+    n_active_members = sum(1 for cnt in msgs_per_sender.values() if cnt / span_days >= 1)
+
+    # 3. Coverage: percentage of total calendar days that have at least one message
+    if date_start and date_end:
+        from datetime import date as _date
+        d0 = _date.fromisoformat(date_start)
+        d1 = _date.fromisoformat(date_end)
+        total_span_days = (d1 - d0).days + 1
+        coverage_pct = round(n_active / total_span_days * 100) if total_span_days else 100
+    else:
+        coverage_pct = 100
 
     def get_chart(kw):
         return next((c.get('topn', c.get('top5', c.get('top3', [])))
@@ -792,16 +814,16 @@ def main():
   <div class="h-meta">
     <span><strong>{date_start}</strong> — <strong>{date_end}</strong></span>
     <span><strong>{total_msg:,}</strong> 条消息</span>
-    <span><strong>{n_members:,}</strong> 位成员</span>
+    <span><strong>{n_members_all:,}</strong> 位成员</span>
     <span><strong>{n_active:,}</strong> 个活跃天</span>
   </div>
   {h_peak}
 </header>
 
 <div class="stats-bar reveal delay-1">
-  <div class="stat-cell"><div class="stat-n" data-val="{total_msg}">{total_msg:,}</div><div class="stat-l">总消息数</div></div>
-  <div class="stat-cell"><div class="stat-n" data-val="{n_members}">{n_members:,}</div><div class="stat-l">发言成员</div></div>
-  <div class="stat-cell"><div class="stat-n" data-val="{n_active}">{n_active:,}</div><div class="stat-l">活跃天数</div></div>
+  <div class="stat-cell"><div class="stat-n">{chat_mb_str}</div><div class="stat-l">合计数据量</div></div>
+  <div class="stat-cell"><div class="stat-n" data-val="{n_active_members}">{n_active_members:,}</div><div class="stat-l">活跃成员（日均≥1条）</div></div>
+  <div class="stat-cell"><div class="stat-n" data-val="{coverage_pct}">{coverage_pct}%</div><div class="stat-l">天数有消息更新</div></div>
   <div class="stat-cell"><div class="stat-n" data-val="{daily_avg}">{daily_avg:,}</div><div class="stat-l">日均发言次数</div></div>
 </div>
 
