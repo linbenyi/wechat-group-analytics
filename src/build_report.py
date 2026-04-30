@@ -61,6 +61,49 @@ LB_CATEGORIES = [
 
 DEFAULT_XIEHOUYU = '"群聊就是这样的——你以为大家都忘了，结果截图还存着呢。"'
 
+# Words that carry emotional / evaluative / comparative weight
+EMOTIONAL_WORDS = {
+    # reactions / laughter
+    '哈哈','哈哈哈','笑死','666','哇','哎','唉','哦','嗯','好的','嗯嗯',
+    # positive evaluation
+    '棒','牛','赞','厉害','强','爽','开心','好','喜欢','爱','美','帅','可爱','萌','优秀',
+    # negative evaluation
+    '难','烦','累','糟','差','垃圾','蠢','气死','服了','惨','失望',
+    # comparison / opinion
+    '比','还是','更','不如','胜','赢','输','对比','其实','确实','果然','居然','竟然',
+    # money / finance
+    '发财','赚钱','钱','贵','便宜','买','卖','投资','亏','赚',
+    # emphasis
+    '真的','太','超级','非常','极','最','好像','感觉','觉得',
+    # social / group vibes
+    '一起','大家','我们','朋友','聊','说','看','玩','干','搞',
+}
+
+
+# ── Color / axis helpers ──────────────────────────────────────────────────────
+
+def _lerp_hex(hex1: str, hex2: str, t: float) -> str:
+    """Interpolate between two #rrggbb colours. t=0→hex1, t=1→hex2."""
+    t = max(0.0, min(1.0, t))
+    r1,g1,b1 = int(hex1[1:3],16), int(hex1[3:5],16), int(hex1[5:7],16)
+    r2,g2,b2 = int(hex2[1:3],16), int(hex2[3:5],16), int(hex2[5:7],16)
+    return f'#{int(r1+(r2-r1)*t):02x}{int(g1+(g2-g1)*t):02x}{int(b1+(b2-b1)*t):02x}'
+
+
+def _nice_ticks(max_val: float, n: int = 5) -> list:
+    """Return ~n evenly-spaced tick values from 0 to above max_val."""
+    if max_val <= 0:
+        return [0]
+    raw = max_val / n
+    mag = 10 ** math.floor(math.log10(raw))
+    step = max(mag, round(raw / mag) * mag)
+    ticks = []
+    v = 0.0
+    while v <= max_val * 1.05:
+        ticks.append(v)
+        v += step
+    return ticks
+
 
 # ── SVG helpers ───────────────────────────────────────────────────────────────
 
@@ -109,6 +152,79 @@ def svg_scatter(points, C, width=460, height=250, color_key='purple', xlabel='',
             f'<text x="{(width+pl)//2}" y="{height-2}" font-size="9" fill="{C["muted"]}"'
             f' text-anchor="middle">{xlabel}</text>')
     return f'<svg viewBox="0 0 {width} {height}" width="100%" xmlns="http://www.w3.org/2000/svg">{axes}{dots}</svg>'
+
+
+def svg_scatter_lurkers(rows, C, width=500, height=340):
+    """
+    Bubble scatter for lurkers (少言寡语).
+    rows: portrait_row dicts with keys: name, span, total, silent, first, last
+    X = active span (days)   Y = total messages
+    Bubble size ∝ daily_avg (total / max(span,1))
+    Colour: accent → near-white, mapped to silent_days (0 = full colour, max = pale)
+    """
+    if not rows:
+        return '<p style="color:var(--muted);font-size:.82rem">No data</p>'
+    pl, pb, pt, pr = 54, 44, 18, 18
+
+    xs = [r['span']  for r in rows]
+    ys = [r['total'] for r in rows]
+    max_x, max_y = max(xs) or 1, max(ys) or 1
+    max_silent = max(r['silent'] for r in rows) or 1
+    max_daily  = max(r['total'] / max(r['span'], 1) for r in rows) or 1
+
+    sx = lambda v: pl + v / max_x * (width  - pl - pr)
+    sy = lambda v: height - pb - v / max_y * (height - pb - pt)
+
+    # colour stops: accent → very light warm
+    c_full  = C['accent']   # most recent
+    c_pale  = '#F2EBE4'     # longest silent (near bg)
+
+    # axis ticks
+    x_ticks = _nice_ticks(max_x, 5)
+    y_ticks = _nice_ticks(max_y, 5)
+
+    grid = ''
+    for xv in x_ticks:
+        gx = sx(xv)
+        grid += (f'<line x1="{gx:.1f}" y1="{pt}" x2="{gx:.1f}" y2="{height-pb}"'
+                 f' stroke="{C["border"]}" stroke-width="0.8" stroke-dasharray="3,3"/>'
+                 f'<text x="{gx:.1f}" y="{height-pb+14}" font-size="9" fill="{C["muted"]}"'
+                 f' text-anchor="middle">{int(xv)}</text>')
+    for yv in y_ticks:
+        gy = sy(yv)
+        grid += (f'<line x1="{pl}" y1="{gy:.1f}" x2="{width-pr}" y2="{gy:.1f}"'
+                 f' stroke="{C["border"]}" stroke-width="0.8" stroke-dasharray="3,3"/>'
+                 f'<text x="{pl-6}" y="{gy+3:.1f}" font-size="9" fill="{C["muted"]}"'
+                 f' text-anchor="end">{int(yv)}</text>')
+
+    axes = (f'<line x1="{pl}" y1="{height-pb}" x2="{width-pr}" y2="{height-pb}"'
+            f' stroke="{C["border"]}" stroke-width="1.5"/>'
+            f'<line x1="{pl}" y1="{pt}" x2="{pl}" y2="{height-pb}"'
+            f' stroke="{C["border"]}" stroke-width="1.5"/>'
+            f'<text x="{(width+pl)//2}" y="{height-pb+28}" font-size="9" fill="{C["muted"]}"'
+            f' text-anchor="middle">活跃跨度（天）</text>'
+            f'<text x="11" y="{(height+pt)//2}" font-size="9" fill="{C["muted"]}"'
+            f' text-anchor="middle" transform="rotate(-90,11,{(height+pt)//2})">发言次数</text>')
+
+    dots = ''
+    for r in rows:
+        cx = sx(r['span'])
+        cy = sy(r['total'])
+        daily_avg = r['total'] / max(r['span'], 1)
+        radius = 4 + (daily_avg / max_daily) * 10
+        t_color = r['silent'] / max_silent       # 0=recent(accent), 1=old(pale)
+        fill = _lerp_hex(c_full, c_pale, t_color)
+        stroke = _lerp_hex(c_full, '#C8B8AC', t_color)
+        short = r['name'][:7] + ('…' if len(r['name']) > 7 else '')
+        dots += (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{radius:.1f}" fill="{fill}"'
+                 f' opacity=".88" stroke="{stroke}" stroke-width="1.2">'
+                 f'<title>{r["name"]}\n发言: {r["total"]} 条  跨度: {r["span"]} 天'
+                 f'\n日均: {daily_avg:.1f} 条  沉默: {r["silent"]} 天</title></circle>'
+                 f'<text x="{cx:.1f}" y="{cy-radius-3:.1f}" font-size="8.5" fill="{C["text"]}"'
+                 f' text-anchor="middle" opacity=".75">{short}</text>')
+
+    return (f'<svg viewBox="0 0 {width} {height}" width="100%"'
+            f' xmlns="http://www.w3.org/2000/svg">{grid}{axes}{dots}</svg>')
 
 
 def svg_scatter_stars(points, C, width=460, height=270, color_key='green',
@@ -233,13 +349,14 @@ def compute_portraits(messages):
 
 def make_portraits(rows, vanish_min=10, vanish_days=180,
                    lurk_max=50, lurk_span=180,
-                   star_late=30, star_total=20, limit=20):
+                   star_late=30, star_total=20,
+                   lurk_limit=50, star_limit=20):
     lurkers  = sorted([r for r in rows if r['total'] <= lurk_max and r['span'] >= lurk_span],
-                      key=lambda r: r['span'], reverse=True)[:limit]
+                      key=lambda r: r['span'], reverse=True)[:lurk_limit]
     vanished = sorted([r for r in rows if r['total'] >= vanish_min and r['silent'] >= vanish_days],
-                      key=lambda r: r['silent'], reverse=True)[:limit]
+                      key=lambda r: r['silent'], reverse=True)[:20]
     stars    = sorted([r for r in rows if r['late'] >= star_late and r['total'] >= star_total],
-                      key=lambda r: r['total'], reverse=True)[:limit]
+                      key=lambda r: r['total'], reverse=True)[:star_limit]
     return lurkers, vanished, stars
 
 
@@ -305,20 +422,38 @@ def make_group_prose(words, group_name='这个群'):
 
 
 def make_person_prose(words):
-    """Generate ~100-char prose from a person's top words; top-3 highlighted."""
+    """Generate ~100-char emotional portrait from a person's top words; top-3 highlighted.
+    Emotional / evaluative words are promoted to the front of the prose."""
     if not words:
         return ''
-    top3 = {w for w, _ in words[:3]}
-    ww = [w for w, _ in words]
-    def g(i, fb=''): return ww[i] if i < len(ww) else fb
-    def h(i, fb=''): return _hi(g(i, fb), top3)
+    # Split into emotional and neutral words, keep frequency order within each group
+    emotional = [(w, c) for w, c in words if w in EMOTIONAL_WORDS]
+    neutral   = [(w, c) for w, c in words if w not in EMOTIONAL_WORDS]
+    ordered   = emotional + neutral          # emotional words first
+    top3 = {w for w, _ in ordered[:3]}
+    def g(lst, i, fb=''): return lst[i][0] if i < len(lst) else fb
+    def h(lst, i, fb=''): return _hi(g(lst, i, fb), top3)
 
-    segs = [
-        f'最爱说{h(0)}，{h(1)}也常挂在嘴边。',
-        f'聊到{h(2)}时总有话讲，',
-        f'{g(3)}和{g(4)}同样是高频词。',
-        f'偶尔冒出{g(5)}、{g(6)}，风格鲜明。',
-    ]
+    e, n = emotional, neutral
+    # Build prose targeting ~100 chars; adapt template to available emotional words
+    if len(e) >= 2:
+        segs = [
+            f'最爱说{h(e,0)}和{h(e,1)}，情绪表达直接。',
+            f'聊到{h(ordered,2)}时格外投入，',
+            f'{g(n,0)}和{g(n,1)}也是常用词，风格鲜明。',
+        ]
+    elif len(e) == 1:
+        segs = [
+            f'话语里{h(e,0)}出现频率很高，',
+            f'还常聊{h(ordered,1)}和{h(ordered,2)}。',
+            f'{g(n,0)}、{g(n,1)}构成日常腔调。',
+        ]
+    else:
+        segs = [
+            f'最爱说{h(ordered,0)}，{h(ordered,1)}也常挂嘴边。',
+            f'聊到{h(ordered,2)}时总有话讲，',
+            f'{g(n,3)}和{g(n,4)}同样高频。',
+        ]
     return ''.join(s for s in segs if s.strip('，。'))
 
 
@@ -441,16 +576,17 @@ def table_html(portrait_rows, total_msg=1):
 def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
     lurkers, _vanished, stars = make_portraits(portrait_rows)
 
-    mt = max((r['total'] for r in lurkers), default=1)
-    svg_lurk = svg_scatter([(r['name'], r['span'], r['total'], r['total']/mt) for r in lurkers],
-                           C, color_key='purple', xlabel='活跃跨度(天)', ylabel='消息数')
+    # 少言寡语：新气泡图（颜色渐变 + 刻度 + 气泡大小=日均）
+    svg_lurk = svg_scatter_lurkers(lurkers, C)
+
+    # 后起之秀：accent 主题色（warm=珊瑚）
     ms = max((r['total'] / max(r['span'], 1) for r in stars), default=1)
     svg_star = svg_scatter_stars(
         [(r['name'], r['late'], r['total']/max(r['span'],1), (r['total']/max(r['span'],1))/ms)
-         for r in stars], C, color_key='green')
+         for r in stars], C, color_key='accent')
 
-    # 时间线：按首次发言时间排序，显示发言总数
-    tl_rows = sorted(portrait_rows, key=lambda r: r['first'])[:30]
+    # 时间线：发言最多的 30 人，按发言数降序
+    tl_rows = sorted(portrait_rows, key=lambda r: r['total'], reverse=True)[:30]
     tl_events = [
         (r['name'], f"共 {r['total']:,} 条 · {r['first']} ~ {r['last']}")
         for r in tl_rows
