@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from chat_utils import top_words
+from chat_utils import top_words, WECHAT_EMOJI
 
 # ── Themes ────────────────────────────────────────────────────────────────────
 
@@ -294,19 +294,29 @@ def svg_scatter_stars(points, C, width=460, height=270, color_key='green',
 
 
 def svg_timeline(events, C, width=460):
-    """events: list of (label, sub, silent_days)"""
+    """events: list of (label, sub, silent_days, daily_img, daily_link)
+    >100d silent → hollow circle; <title> tooltip with daily img/link stats."""
     if not events:
         return '<p style="color:var(--muted);font-size:.82rem">No data</p>'
     h = len(events) * 44 + 14
     items = ''
-    for i, (label, sub, silent) in enumerate(events):
+    for i, ev in enumerate(events):
+        label, sub, silent = ev[0], ev[1], ev[2]
+        daily_img  = ev[3] if len(ev) > 3 else 0
+        daily_link = ev[4] if len(ev) > 4 else 0
         y = i * 44 + 24
         conn = (f'<line x1="14" y1="{y+5}" x2="14" y2="{y+38}" stroke="{C["border"]}" stroke-width="1.5"/>'
                 if i < len(events) - 1 else '')
-        dot_color = C['red'] if silent > 100 else C['accent']
-        items += (f'<circle cx="14" cy="{y}" r="4" fill="{dot_color}" opacity=".85"/>{conn}'
-                  f'<text x="30" y="{y+4}" font-size="12" font-weight="600" fill="{C["text"]}">{label}</text>'
-                  f'<text x="30" y="{y+18}" font-size="10" fill="{C["muted"]}">{sub}</text>')
+        tip = f'日均图片 {daily_img:.1f} 张 · 日均链接 {daily_link:.1f} 条'
+        if silent > 100:
+            dot = (f'<circle cx="14" cy="{y}" r="4" fill="none" stroke="{C["accent"]}"'
+                   f' stroke-width="1.5" opacity=".85"><title>{tip}</title></circle>')
+        else:
+            dot = (f'<circle cx="14" cy="{y}" r="4" fill="{C["accent"]}" opacity=".85">'
+                   f'<title>{tip}</title></circle>')
+        items += (dot + conn
+                  + f'<text x="30" y="{y+4}" font-size="12" font-weight="600" fill="{C["text"]}">{label}</text>'
+                  + f'<text x="30" y="{y+18}" font-size="10" fill="{C["muted"]}">{sub}</text>')
     return f'<svg viewBox="0 0 {width} {h}" width="100%" xmlns="http://www.w3.org/2000/svg">{items}</svg>'
 
 
@@ -447,19 +457,22 @@ def make_group_prose(words, group_name='这个群'):
 
 def make_person_prose(words):
     """Generate ~100-char emotional portrait from a person's top words; top-3 highlighted.
-    Emotional / evaluative words are promoted to the front of the prose."""
+    Emotional / evaluative words are promoted to the front; emoji words get a dedicated sentence."""
     if not words:
         return ''
-    # Split into emotional and neutral words, keep frequency order within each group
-    emotional = [(w, c) for w, c in words if w in EMOTIONAL_WORDS]
-    neutral   = [(w, c) for w, c in words if w not in EMOTIONAL_WORDS]
-    ordered   = emotional + neutral          # emotional words first
+    # Partition: emoji | emotional | neutral  (emoji excluded from main prose to avoid "最爱说捂脸")
+    emoji_words = [(w, c) for w, c in words if w in WECHAT_EMOJI]
+    non_emoji   = [(w, c) for w, c in words if w not in WECHAT_EMOJI]
+    emotional   = [(w, c) for w, c in non_emoji if w in EMOTIONAL_WORDS]
+    neutral     = [(w, c) for w, c in non_emoji if w not in EMOTIONAL_WORDS]
+    ordered     = emotional + neutral          # emotional words first, for top-3 highlight
+
     top3 = {w for w, _ in ordered[:3]}
     def g(lst, i, fb=''): return lst[i][0] if i < len(lst) else fb
     def h(lst, i, fb=''): return _hi(g(lst, i, fb), top3)
 
     e, n = emotional, neutral
-    # Build prose targeting ~100 chars; adapt template to available emotional words
+    # Main prose (~80 chars), adapt to how many emotional words are available
     if len(e) >= 2:
         segs = [
             f'最爱说{h(e,0)}和{h(e,1)}，情绪表达直接。',
@@ -478,6 +491,10 @@ def make_person_prose(words):
             f'聊到{h(ordered,2)}时总有话讲，',
             f'{g(n,3)}和{g(n,4)}同样高频。',
         ]
+    # Emoji sentence — appended if this person uses WeChat emoji frequently
+    if emoji_words:
+        top_e = '、'.join(f'[{w}]' for w, _ in emoji_words[:3])
+        segs.append(f'常发{top_e}等表情，辨识度十足。')
     return ''.join(s for s in segs if s.strip('，。'))
 
 
@@ -495,8 +512,9 @@ def word_html(messages, group_name='这个群'):
         size = 0.76 + p * 0.92
         op   = 0.40 + p * 0.60
         col  = 'var(--accent)' if p > 0.6 else ('var(--accent2)' if p > 0.3 else 'var(--muted)')
+        label = f'[{w}]' if w in WECHAT_EMOJI else w
         badges += (f'<span class="wbadge" style="font-size:{size:.2f}rem;color:{col};opacity:{op:.2f}"'
-                   f' title="{c} 次">{w}</span>')
+                   f' title="{c} 次">{label}</span>')
     prose = make_group_prose(words, group_name)
     return f'<div class="word-cloud">{badges}</div>{prose}'
 
@@ -518,8 +536,9 @@ def person_words_html(messages, portrait_rows):
             p = c / mc
             size = 0.78 + p * 0.50
             op   = 0.55 + p * 0.45
+            label = f'[{w}]' if w in WECHAT_EMOJI else w
             badges += (f'<span class="wbadge" style="font-size:{size:.2f}rem;'
-                       f'color:var(--accent);opacity:{op:.2f}" title="{c} 次">{w}</span> ')
+                       f'color:var(--accent);opacity:{op:.2f}" title="{c} 次">{label}</span> ')
         prose = make_person_prose(words)
         short = name[:10] + ('…' if len(name) > 10 else '')
         items.append(
@@ -598,21 +617,21 @@ def table_html(portrait_rows, total_msg=1):
 
 
 def timeline_html(portrait_rows, C):
-    """Standalone timeline card for left column. Top-30 by total messages.
-    Last-seen >100 days ago: end date shown bold + red dot."""
+    """Timeline card (used inside portrait tabs). Top-30 by total messages.
+    Last-seen >100 days ago: hollow circle. Hover shows daily img/link averages."""
     tl_rows = sorted(portrait_rows, key=lambda r: r['total'], reverse=True)[:30]
     events = []
     for r in tl_rows:
-        last_str = r['last']
-        if r['silent'] > 100:
-            last_str = f'<tspan font-weight="700" fill="{{}}">{last_str}</tspan>'
+        span = max(r['span'], 1)
+        daily_img  = round(r['image'] / span, 1)
+        daily_link = round(r['link']  / span, 1)
         events.append((r['name'],
                        f"共 {r['total']:,} 条 · {r['first']} ~ {r['last']}",
-                       r['silent']))
+                       r['silent'], daily_img, daily_link))
     svg = svg_timeline(events, C)
     return (f'<div class="p-card" style="height:450px;overflow:hidden;display:flex;flex-direction:column">'
             f'<h3>成员时间线</h3>'
-            f'<span class="p-count">Top-30 发言成员 · 末次发言超100天的圆点标红</span>'
+            f'<span class="p-count">Top-30 发言成员 · 末次发言超100天圆圈为空心 · 悬停查看日均图片链接</span>'
             f'<div class="svg-container">{svg}</div>'
             f'</div>')
 
@@ -629,18 +648,23 @@ def portrait_tabs_html(portrait_rows, messages, C, group_name='这个群'):
 
     wh = word_html(messages, group_name)
     pw = person_words_html(messages, portrait_rows)
+    tl = timeline_html(portrait_rows, C)
 
     nl, ns = len(lurkers), len(stars)
     def tc(n): return f'<span class="tab-count">{n}</span>' if n else ''
 
     return f"""<div class="portrait-tabs">
   <div class="tab-bar">
-    <button class="tab-btn active" onclick="showTab(this,'tp-lurk')">少言寡语{tc(nl)}</button>
+    <button class="tab-btn active" onclick="showTab(this,'tp-tl')">成员时间线</button>
+    <button class="tab-btn" onclick="showTab(this,'tp-lurk')">少言寡语{tc(nl)}</button>
     <button class="tab-btn" onclick="showTab(this,'tp-star')">后起之秀{tc(ns)}</button>
     <button class="tab-btn" onclick="showTab(this,'tp-word')">群组词频</button>
     <button class="tab-btn" onclick="showTab(this,'tp-pw')">个人词频</button>
   </div>
-  <div id="tp-lurk" class="tab-panel active">
+  <div id="tp-tl" class="tab-panel active">
+    {tl}
+  </div>
+  <div id="tp-lurk" class="tab-panel">
     <div class="p-card"><h3>少言寡语者</h3>
       <span class="p-count">{nl} 位 · 发言 ≤50 条，活跃跨度 ≥180 天</span>
       <div class="svg-container">{svg_lurk}</div></div>
@@ -903,8 +927,43 @@ function sortTbl(id, col, type) {
   document.querySelectorAll('.reveal,.scale-reveal').forEach(el=>io.observe(el));
   var co=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){var v=parseInt(e.target.dataset.val);if(!isNaN(v))countUp(e.target,v,1200);co.unobserve(e.target);}}),{threshold:.4});
   document.querySelectorAll('.stat-n[data-val],.h-peak-num[data-val]').forEach(el=>co.observe(el));
+  document.querySelectorAll('.stat-cell').forEach(function(cell){
+    cell.addEventListener('mouseleave',function(){
+      var el=cell.querySelector('.stat-n[data-val]');
+      if(el){var v=parseInt(el.dataset.val);if(!isNaN(v))countUp(el,v,800);}
+    });
+  });
 })();
 """
+
+
+# ── Stats-bar member cell helper ─────────────────────────────────────────────
+
+def _member_stat_cell(n_members_total, n_speakers, n_active_members, active_pct):
+    """Render the ② member stat-cell.
+
+    If --members was supplied (n_members_total is not None):
+        Main number = real total;  label = 群成员
+        Hover = 活跃成员 N 人（日均≥1条）· 活跃占比 X%
+    Otherwise:
+        Main number = speakers (people with ≥1 message in data);  label = 发言成员
+        Hover = 日均发言≥1条的活跃成员 N 人（总人数须手动指定 --members）
+    """
+    if n_members_total is not None:
+        main_val   = n_members_total
+        main_label = '群成员'
+        tip = (f'活跃成员 {n_active_members} 人（日均发言 ≥ 1 条）'
+               f'&emsp;活跃占比 {active_pct}%')
+    else:
+        main_val   = n_speakers
+        main_label = '发言成员'
+        tip = (f'日均发言 ≥ 1 条的活跃成员 {n_active_members} 人'
+               f'&emsp;（群总人数未知，可用 --members 指定）')
+    return (f'<div class="stat-cell">'
+            f'<div class="stat-n" data-val="{main_val}">{main_val:,}</div>'
+            f'<div class="stat-l">{main_label}</div>'
+            f'<div class="stat-tip">{tip}</div>'
+            f'</div>')
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -915,6 +974,8 @@ def main():
     parser.add_argument('chat_json', help='Path to chat-records JSON')
     parser.add_argument('-o', '--output', default='', help='Output HTML path (default: alongside topN.json)')
     parser.add_argument('--theme', choices=['apple', 'warm'], default='apple', help='Colour theme (default: apple)')
+    parser.add_argument('--members', type=int, default=None,
+                        help='Actual total member count of the group (cannot be inferred from chat data)')
     args = parser.parse_args()
 
     topn_path = Path(args.topn_json)
@@ -934,7 +995,10 @@ def main():
     bg = MAGNET_BG[args.theme]
 
     senders = {m['sender'] for m in messages if m['sender'] != 'system'}
-    n_members_all = len(senders)
+    n_speakers = len(senders)   # people who actually sent ≥1 message in the data
+    # Real total member count is unknowable from chat data alone (silent/pre-data members missed).
+    # Use --members if provided; otherwise fall back to speaker count with a clear label.
+    n_members_total = args.members   # None if not supplied
     dates = sorted({m['date'] for m in messages if 'date' in m and m['sender'] != 'system'})
     n_active  = len(dates)
     date_start, date_end = (dates[0], dates[-1]) if dates else ('', '')
@@ -967,8 +1031,16 @@ def main():
     n_image   = sum(1 for m in messages if m.get('msg_type') == 'image')
     n_link    = sum(1 for m in messages if m.get('msg_type') == 'link')
     n_sticker = sum(1 for m in messages if m.get('msg_type') == 'sticker')
-    active_pct = round(n_active_members / n_members_all * 100) if n_members_all else 0
-    daily_avg_active = round(total_msg / n_active) if n_active else 0   # msgs on days that have msgs
+    # Active-member ratio is only meaningful when real total is known
+    if n_members_total:
+        active_pct = round(n_active_members / n_members_total * 100)
+    else:
+        active_pct = None   # cannot compute without real total
+    # ④ Two daily-avg figures:
+    #   daily_avg_total  = total_msg / total_span_days  (all calendar days, including silent ones)
+    #   daily_avg_active = total_msg / n_active         (only days that had messages)
+    daily_avg_total  = round(total_msg / total_span_days) if total_span_days else 0
+    daily_avg_active = round(total_msg / n_active)        if n_active        else 0
     daily_img    = round(n_image   / n_active, 1) if n_active else 0
     daily_stick  = round(n_sticker / n_active, 1) if n_active else 0
 
@@ -988,6 +1060,7 @@ def main():
     ) if peak_count else ''
 
     portrait_rows = compute_portraits(messages)
+    n_tbl_rows = min(20, len(portrait_rows))   # actual rows in 综合榜单
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1005,7 +1078,7 @@ def main():
   <div class="h-meta">
     <span><strong>{date_start}</strong> — <strong>{date_end}</strong></span>
     <span>{chat_mb_str} 数据</span>
-    <span>已选出前 <strong>{n_active_members}</strong> 位活跃成员</span>
+    <span>已选出前 <strong>{n_tbl_rows}</strong> 位活跃成员</span>
     <span>消息已脱敏</span>
   </div>
   {h_peak}
@@ -1017,19 +1090,15 @@ def main():
     <div class="stat-l">总消息数</div>
     <div class="stat-tip">📷 图片 {n_image:,} 条&emsp;🔗 链接 {n_link:,} 条&emsp;😄 表情 {n_sticker:,} 条</div>
   </div>
+  {_member_stat_cell(n_members_total, n_speakers, n_active_members, active_pct)}
   <div class="stat-cell">
-    <div class="stat-n" data-val="{n_active_members}">{n_active_members:,}</div>
-    <div class="stat-l">活跃成员</div>
-    <div class="stat-tip">总成员 {n_members_all} 人&emsp;活跃占比 {active_pct}%</div>
+    <div class="stat-n" data-val="{total_span_days}">{total_span_days:,}</div>
+    <div class="stat-l">统计跨度（天）</div>
+    <div class="stat-tip">有消息天数 {n_active} 天&emsp;占总跨度 {coverage_pct}%</div>
   </div>
   <div class="stat-cell">
-    <div class="stat-n" data-val="{coverage_pct}">{coverage_pct}%</div>
-    <div class="stat-l">天数有消息</div>
-    <div class="stat-tip">有消息天数 {n_active} 天&emsp;总跨度 {total_span_days} 天</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-n" data-val="{daily_avg_active}">{daily_avg_active:,}</div>
-    <div class="stat-l">日均发言</div>
+    <div class="stat-n" data-val="{daily_avg_total}">{daily_avg_total:,}</div>
+    <div class="stat-l">全期日均发言</div>
     <div class="stat-tip">有消息日日均 {daily_avg_active} 条&emsp;日均图片 {daily_img}&emsp;日均表情 {daily_stick}</div>
   </div>
 </div>
@@ -1041,20 +1110,16 @@ def main():
 </div>
 
 <div class="section reveal delay-3" style="padding-bottom:48px">
-  <div class="section-head"><span class="section-num">02</span><h2>时间线 · 人物画像</h2></div>
+  <div class="section-head"><span class="section-num">02</span><h2>综合榜单 · 人物画像</h2></div>
   <div class="two-col scale-reveal delay-4">
     <div>
-      <p class="col-label">成员时间线</p>
-      {timeline_html(portrait_rows, C)}
+      <p class="col-label">综合榜单</p>
+      {table_html(portrait_rows, total_msg)}
     </div>
     <div>
       <p class="col-label">人物画像</p>
       {portrait_tabs_html(portrait_rows, messages, C, group)}
     </div>
-  </div>
-  <div class="section-head" style="margin-top:32px"><span class="section-num">03</span><h2>综合榜单</h2></div>
-  <div class="scale-reveal">
-    {table_html(portrait_rows, total_msg)}
   </div>
 </div>
 

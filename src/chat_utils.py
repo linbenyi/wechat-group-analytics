@@ -1,7 +1,29 @@
 """Shared utilities: stopwords, tokenisation, message type labels."""
 
+import re
 from collections import Counter
 import jieba
+
+# WeChat built-in emoji names — appear as [名称] in exported chat logs
+# Classic set (系统自带)
+WECHAT_EMOJI = {
+    '微笑','撇嘴','色','发呆','得意','流泪','害羞','闭嘴','睡','大哭',
+    '尴尬','发怒','调皮','呲牙','惊讶','难过','酷','冷汗','抓狂','吐',
+    '偷笑','愉快','白眼','傲慢','困','惊恐','流汗','憨笑','悠闲','奋斗',
+    '咒骂','疑问','嘘','晕','衰','骷髅','敲打','再见','擦汗','抠鼻',
+    '鼓掌','坏笑','左哼哼','右哼哼','哈欠','鄙视','委屈','快哭了','阴险',
+    '亲亲','可怜','菜刀','西瓜','啤酒','咖啡','猪头','玫瑰','凋谢','嘴唇',
+    '爱心','心碎','蛋糕','闪电','炸弹','刀','足球','瓢虫','便便','月亮',
+    '太阳','礼物','拥抱','强','弱','握手','胜利','抱拳','勾引','拳头',
+    '差劲','爱你','NO','OK',
+    # Extended set (扩展表情包 · 第一批)
+    '吃瓜','加油','汗','天啊','Emm','社会社会','旺柴','好的','打脸','哇',
+    '嘿哈','捂脸',
+    # Extended set (扩展表情包 · 第二批)
+    '666','裂开','叹气','翻白眼','doge','让我看看','破涕为笑','机智','皱眉',
+}
+
+_EMOJI_RE = re.compile(r'\[([^\[\]]+)\]')
 
 STOPWORDS = set("""
 的 了 是 我 你 他 她 它 们 这 那 有 在 不 也 都 就 和 与 但 或
@@ -23,10 +45,21 @@ MSG_TYPE_LABELS = {
 
 
 def top_words(texts, n=30):
-    """Return the n most common jieba-tokenised words, stopwords excluded."""
+    """Return the n most common words (jieba + WeChat emoji), stopwords excluded.
+
+    WeChat emoji like [捂脸] are extracted via regex before jieba sees the text,
+    so they are counted as single tokens (stored without brackets, e.g. '捂脸').
+    """
     words = []
     for t in texts:
-        for w in jieba.cut(t, cut_all=False):
+        # 1. Extract [emoji] tokens — only known WeChat emoji names count
+        for name in _EMOJI_RE.findall(t):
+            if name in WECHAT_EMOJI:
+                words.append(name)
+        # 2. Strip all [...] brackets so jieba doesn't see fragments
+        clean = _EMOJI_RE.sub(' ', t)
+        # 3. Normal jieba tokenisation on remaining text
+        for w in jieba.cut(clean, cut_all=False):
             w = w.strip()
             if len(w) >= 2 and w not in STOPWORDS and not w.isdigit():
                 words.append(w)
