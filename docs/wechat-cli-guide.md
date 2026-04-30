@@ -156,24 +156,24 @@ python src/build_report.py top5.json chat.json -o report.html --theme warm
 
 ---
 
-## 完整示例（宅急送快递群，约 3 万条）
+## 完整示例（YAMATO快递群，约 3 万条）
 
 ```bash
 # 1. 导出
-wechat-cli export "宅急送" --format markdown --limit 9999999 --output 宅急送聊天记录.md
+wechat-cli export "YAMATO" --format markdown --limit 9999999 --output YAMATO聊天记录.md
 
 # 2. 生成 Plotly 图表报告
-python analyze_chat.py 宅急送聊天记录.md
+python analyze_chat.py YAMATO聊天记录.md
 
 # 3. 提取 Top-N 数据
-python src/extract_topn.py html报告/宅急送/report.html
+python src/extract_topn.py html报告/YAMATO/report.html
 
 # 4. 转 JSON
-python md_to_json.py 宅急送聊天记录.md
+python md_to_json.py YAMATO聊天记录.md
 
 # 5. 生成最终报告
-python src/build_report.py html报告/宅急送/top5.json 宅急送聊天记录.json \
-    -o html报告/宅急送/report_final.html
+python src/build_report.py html报告/YAMATO/top5.json YAMATO聊天记录.json \
+    -o html报告/YAMATO/report_final.html
 ```
 
 ---
